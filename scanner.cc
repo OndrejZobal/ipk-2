@@ -178,9 +178,9 @@ void send_udp_packet(char* source, char* destination, int d_port, int s_port, in
     free(udp_packet);
 }
 
-void process_tcp_response(struct tcphdr* tcp_header, unsigned short s_port, PortMap& port_map, std::mutex& port_map_mutex) {
+int process_tcp_response(struct tcphdr* tcp_header, unsigned short s_port, PortMap& port_map, std::mutex& port_map_mutex) {
     if (ntohs(tcp_header->dest) != s_port) {
-        return;
+        return 0;
     }
 
     PortStatus status;
@@ -193,30 +193,36 @@ void process_tcp_response(struct tcphdr* tcp_header, unsigned short s_port, Port
     std::lock_guard<std::mutex> guard(port_map_mutex);
     if (port_map.find(ntohs(tcp_header->source)) != port_map.end()) {
         port_map[ntohs(tcp_header->source)] = status;
+        return 1;
     }
+
+    return 0;
 }
 
-void process_icmp_response(struct icmphdr* icmp_header, unsigned short s_port, PortMap& udp_port_map, std::mutex& port_map_mutex) {
+int process_icmp_response(struct icmphdr* icmp_header, unsigned short s_port, PortMap& udp_port_map, std::mutex& port_map_mutex) {
     if (icmp_header->type != ICMP_DEST_UNREACH || icmp_header->code != ICMP_PORT_UNREACH) {
-        return;
+        return 0;
     }
 
     // IP header of the original message is stored after 8 bytes
     struct iphdr* ip_header = (struct iphdr*) (((char*)icmp_header) + 8);
-    struct udphdr* udp_header = (struct udphdr*) (((char*)ip_header) + sizeof(ip_header));
+    struct udphdr* udp_header = (struct udphdr*) (((char*)ip_header) + sizeof(iphdr));
 
     if (ip_header->protocol != IPPROTO_UDP) {
-        return;
+        return 0;
     }
-    if (udp_header->source != s_port) {
-        return;
+
+    if (udp_header->source != htons(s_port)) {
+        return 0;
     }
 
     std::lock_guard<std::mutex> guard(port_map_mutex);
-    if (udp_port_map.find(ntohs(udp_header->source)) != udp_port_map.end()) {
-        cerr << (int) udp_port_map[ntohs(udp_header->dest)] << endl;
+    if (udp_port_map.find(ntohs(udp_header->dest)) != udp_port_map.end()) {
         udp_port_map[ntohs(udp_header->dest)] = PortStatus::closed;
+        return 1;
     }
+
+    return 0;
 }
 
 void recive_packet(int raw_socket,
@@ -260,7 +266,7 @@ void recive_packet(int raw_socket,
             ms = chrono::duration_cast<std::chrono::milliseconds>(chrono::high_resolution_clock::now() - start).count();
             int remain = limit_ms - ms;
 
-            if (remain <= 0 || (int) (port_map.size() + port_map.size()) <= recived) {
+            if (remain <= 0 || (int) port_map.size() <= recived) {
                 break;
             }
 
@@ -274,10 +280,10 @@ void recive_packet(int raw_socket,
         if (response_size == -1) continue;
 
         if (ip_header->protocol == IPPROTO_TCP && protocol == IPPROTO_TCP) {
-            process_tcp_response((struct tcphdr*) next_header, s_port, port_map, port_map_mutex);
+            recived += process_tcp_response((struct tcphdr*) next_header, s_port, port_map, port_map_mutex);
         }
         else if (ip_header->protocol == IPPROTO_ICMP && protocol == IPPROTO_ICMP) {
-            process_icmp_response((struct icmphdr*) next_header, s_port, port_map, port_map_mutex);
+            recived += process_icmp_response((struct icmphdr*) next_header, s_port, port_map, port_map_mutex);
         }
 
     } while (ms < limit_ms);
@@ -293,10 +299,10 @@ void print_result(PortEnumer port_num, PortMap tcp_port_status, PortMap udp_port
         char* protocol;
         switch (type) {
             case PortType::tcp:
-                protocol = "tcp";
+                protocol = (char*) "tcp";
                 break;
             case PortType::udp:
-                protocol = "udp";
+                protocol = (char*) "udp";
                 break;
         }
 
@@ -304,13 +310,13 @@ void print_result(PortEnumer port_num, PortMap tcp_port_status, PortMap udp_port
         if (type == PortType::tcp) {
             switch (tcp_port_status[index]) {
                 case PortStatus::open:
-                    status = "open";
+                    status = (char*) "open";
                     break;
                 case PortStatus::silent:
-                    status = "filtered";
+                    status = (char*) "filtered";
                     break;
                 case PortStatus::closed:
-                    status = "closed";
+                    status = (char*) "closed";
                     break;
             }
         }
@@ -318,10 +324,10 @@ void print_result(PortEnumer port_num, PortMap tcp_port_status, PortMap udp_port
         else if (type == PortType::udp) {
             switch(udp_port_status[index]) {
                 case PortStatus::open:
-                    status = "open";
+                    status = (char*) "open";
                     break;
                 case PortStatus::closed:
-                    status = "closed";
+                    status = (char*) "closed";
                     break;
                 default:;
             }
@@ -353,10 +359,10 @@ void send_all_packets(char* source, char* destination, int s_port, int raw_socke
 int main() {
     srand(time(NULL));
 
-    char* source = "192.168.2.128";
-    char* destination = "192.168.2.2";
-    short s_port = rand() % (0xffff - 1024) + 1024;
-    int limit_ms = 5000;
+    char* source = (char*) "192.168.2.128";
+    char* destination = (char*) "192.168.2.2";
+    unsigned short s_port = rand() % (0xffff - 1024) + 1024;
+    int limit_ms = 10000;
 
     int raw_socket = create_socket(IPPROTO_TCP);
     int icmp_socket = create_socket(IPPROTO_ICMP);
@@ -365,30 +371,27 @@ int main() {
     PortMap tcp_port_status;
     PortMap udp_port_status;
 
-    /*
     for (int i = 1; i <= 124; ++i) {
         port_num.push_back(pair(PortType::tcp, i));
         tcp_port_status.insert({i, PortStatus::silent});
     }
-    for (int i = 1; i <= 124; ++i) {
+    for (int i = 40; i <= 45; ++i) {
         port_num.push_back(pair(PortType::udp, i));
         udp_port_status.insert({i, PortStatus::open});
     }
-    */
 
-    port_num.push_back(pair(PortType::udp, 100));
-    udp_port_status.insert({100, PortStatus::open});
+    // port_num.push_back(pair(PortType::udp, 53));
+    // udp_port_status.insert({53, PortStatus::open});
 
     atomic<bool> sent_all { false };
-    sent_all.store(false);
 
     std::mutex tcp_mutex;
     std::mutex udp_mutex;
 
     // The recvfrom function needs to run in it's ow thread because sending a large amounts of packets
     // takes a really long time and we could miss some responses.
-    std::thread tcp_thread(recive_packet, raw_socket, s_port, ref(tcp_port_status), ref(tcp_mutex), limit_ms, &sent_all, IPPROTO_TCP);
-    std::thread udp_thread(recive_packet, icmp_socket, s_port, ref(udp_port_status), ref(udp_mutex), limit_ms, &sent_all, IPPROTO_ICMP);
+    std::thread tcp_thread {recive_packet, raw_socket, s_port, ref(tcp_port_status), ref(tcp_mutex), limit_ms, &sent_all, IPPROTO_TCP};
+    std::thread udp_thread {recive_packet, icmp_socket, s_port, ref(udp_port_status), ref(udp_mutex), limit_ms, &sent_all, IPPROTO_ICMP};
 
     send_all_packets(source, destination, s_port, raw_socket, port_num);
     sent_all.store(true);
