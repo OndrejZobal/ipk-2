@@ -19,7 +19,7 @@ $(shell mkdir ${BUILD_DIR} 2>/dev/null)
 
 OBJ = $(patsubst %.cc,$(BUILD_DIR)/%.o,$(wildcard *.cc))
 
-.PHONY: all run test clean
+.PHONY: all run test clean pack
 
 all: $(TARGET)
 
@@ -28,7 +28,11 @@ run: all
 
 clean:
 	rm ./$(BUILD_DIR)/*.o 2>/dev/null
-	rm ./$(TARGET) 2>/dev/null || true
+	rm ./$(TARGET) 2>/dev/null
+	rm xzobal01.zip 2>/dev/null ||true
+
+pack: *.cc *.hh *.md Makefile LICENSE
+	zip xzobal01.zip $^
 
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS) && echo "OK" >/dev/stderr
