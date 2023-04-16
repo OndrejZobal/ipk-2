@@ -1,8 +1,5 @@
-#include "scanner.hh"
 #include <iostream>
-#include <sys/epoll.h>
 #include <cstring>
-#include <pcap.h>
 #include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -10,155 +7,22 @@
 #include <netinet/ip_icmp.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <signal.h>
-#include<map>
-#include<string>
+#include <string>
 #include <thread>
-#include <vector>
 #include <chrono>
 #include <time.h>
-#include <chrono>
 #include <mutex>
 #include <atomic>
+#include <sys/ioctl.h>
+#include <net/if.h>
+
+#include "scanner.hh"
+#include "cmdline.hh"
+#include "util.hh"
+
 
 using namespace std;
-enum class PortStatus {silent, open, closed};
-enum class PortType { tcp, udp };
-
-using PortMap = map<unsigned short, PortStatus>;
-using PortEnumer = vector<pair<PortType, unsigned short>>;
-
-// This is the timeout in ms between sending each packet.
-// I have had good results with pauses as little as 4 ms
-// so this should work even on slower devices.
-#define SEND_PAUSE_MS 20
-
-unsigned short calculate_tcp_checksum(unsigned short *addr, int count) {
-        /* Compute Internet Checksum for "count" bytes
-        *         beginning at location "addr".
-        */
-       long sum = 0;
-
-        while( count > 1 )  {
-           /*  This is the inner loop */
-               sum += *addr++;
-               count -= 2;
-       }
-
-           /*  Add left-over byte, if any */
-       if( count > 0 )
-               sum += * (unsigned char *) addr;
-
-           /*  Fold 32-bit sum to 16 bits */
-       while (sum>>16)
-           sum = (sum & 0xffff) + (sum >> 16);
-
-       return ~sum;
-}
-
-struct checkSumIpHeader {
-    int saddr;
-    int daddr;
-    char zero;
-    char protocol;
-    short tcp_len;
-    struct tcphdr tcp;
-};
-
-char* create_tcp_syn(const char* source, const char* dest, short dest_port, short source_port, int* packet_size) {
-    *packet_size = sizeof(struct iphdr) + sizeof(struct tcphdr);
-    char* buffer = static_cast<char*>(malloc(*packet_size));
-    memset(buffer, 0, *packet_size);
-
-    struct iphdr* ip_header = (struct iphdr*)(buffer);
-    struct tcphdr* tcp_header = (struct tcphdr*)(buffer + sizeof(struct iphdr));
-
-    ip_header->ihl = 5;
-    ip_header->version = 4;
-    ip_header->tos = 0;
-    ip_header->tot_len = *packet_size;
-    ip_header->id = rand() % 0xffff;
-    ip_header->frag_off = 0;
-    ip_header->ttl = 64;
-    ip_header->protocol = IPPROTO_TCP;
-    ip_header->saddr = inet_addr(source);
-    ip_header->daddr = inet_addr(dest);
-    ip_header->check = htons(htons(~(tcp_header->check)) + htons(~(ip_header->protocol)) + htons(sizeof(tcp_header) + sizeof(ip_header)));
-
-    tcp_header->source = htons(source_port);
-    tcp_header->dest = htons(dest_port);
-    tcp_header->seq = rand();
-    tcp_header->doff = 5;
-    tcp_header->syn = 1;
-    tcp_header->window = htons(8192);
-    tcp_header->check = 0;
-    tcp_header->urg_ptr = 0;
-
-    struct checkSumIpHeader checkHeader;
-    checkHeader.saddr = ip_header->saddr;
-    checkHeader.daddr = ip_header->daddr;
-    checkHeader.zero = '\0';
-    checkHeader.protocol = ip_header->protocol;
-    checkHeader.tcp_len = htons(sizeof(struct tcphdr));
-    memcpy(&(checkHeader.tcp), tcp_header, sizeof(struct tcphdr));
-
-    tcp_header->check = calculate_tcp_checksum((unsigned short*) &checkHeader, sizeof(struct checkSumIpHeader));
-
-    return buffer;
-}
-
-char* create_udp_probe(const char* source, const char* dest, short dest_port, short source_port, int* packet_size) {
-    *packet_size = sizeof(struct iphdr) + sizeof(struct udphdr);
-    char* buffer = static_cast<char*>(malloc(*packet_size));
-    memset(buffer, 0, *packet_size);
-
-    struct iphdr* ip_header = (struct iphdr*)(buffer);
-    struct udphdr* udp_header = (struct udphdr*)(((char*)buffer) + sizeof(struct iphdr));
-
-    ip_header->ihl = 5;
-    ip_header->version = 4;
-    ip_header->tos = 0;
-    ip_header->tot_len = *packet_size;
-    ip_header->id = rand() % 0xffff;
-    ip_header->frag_off = 0;
-    ip_header->ttl = 64;
-    ip_header->protocol = IPPROTO_UDP;
-    ip_header->saddr = inet_addr(source);
-    ip_header->daddr = inet_addr(dest);
-    ip_header->check = htons(htons(~(udp_header->check)) + htons(~(ip_header->protocol)) + htons(sizeof(udp_header) + sizeof(ip_header)));
-
-    udp_header->source = htons(source_port);
-    udp_header->dest = htons(dest_port);
-    udp_header->len = htons(sizeof(struct udphdr));
-    udp_header->check = 0;
-
-    return buffer;
-}
-
-int create_socket(int protocol) {
-    int raw_socket = socket(AF_INET, SOCK_RAW, protocol);
-    if (raw_socket == -1) {
-        cerr << "Could not create raw socket: " << strerror(errno) << endl;
-        exit(1);
-    }
-    int on = 1;
-    if (setsockopt(raw_socket, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) == -1) {
-        cerr << "Could not set IP_HDRINCL: " << strerror(errno) << endl;
-        exit(1);
-    }
-
-    return raw_socket;
-}
-
-struct sockaddr_in create_target(char* destination) {
-    struct sockaddr_in target;
-    memset(&target, 0, sizeof(target));
-    target.sin_family = AF_INET;
-    target.sin_addr.s_addr = inet_addr(destination);
-    return target;
-}
 
 void send_tcp_packet(char* source, char* destination, int d_port, int s_port, int raw_socket, struct sockaddr_in target) {
     int packet_size;
@@ -356,32 +220,28 @@ void send_all_packets(char* source, char* destination, int s_port, int raw_socke
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    (void) argc;
     srand(time(NULL));
 
-    char* source = (char*) "192.168.2.128";
-    char* destination = (char*) "192.168.2.2";
-    unsigned short s_port = rand() % (0xffff - 1024) + 1024;
-    int limit_ms = 10000;
-
-    int raw_socket = create_socket(IPPROTO_TCP);
-    int icmp_socket = create_socket(IPPROTO_ICMP);
+    string source;
+    string hostname;
+    int limit_ms = 5000;
+    string interface;
 
     PortEnumer port_num;
     PortMap tcp_port_status;
     PortMap udp_port_status;
 
-    for (int i = 1; i <= 124; ++i) {
-        port_num.push_back(pair(PortType::tcp, i));
-        tcp_port_status.insert({i, PortStatus::silent});
-    }
-    for (int i = 40; i <= 45; ++i) {
-        port_num.push_back(pair(PortType::udp, i));
-        udp_port_status.insert({i, PortStatus::open});
-    }
+    process_cmdline_args(argv, hostname, limit_ms, interface, port_num, tcp_port_status, udp_port_status);
 
-    // port_num.push_back(pair(PortType::udp, 53));
-    // udp_port_status.insert({53, PortStatus::open});
+    string destination = host_to_ip(hostname);
+    unsigned short s_port = rand() % (0xffff - 1024) + 1024;
+
+    get_source_ip((char*) interface.c_str(), source);
+
+    int raw_socket = create_socket(IPPROTO_TCP, (char*) interface.c_str());
+    int icmp_socket = create_socket(IPPROTO_ICMP, (char*) interface.c_str());
 
     atomic<bool> sent_all { false };
 
@@ -393,7 +253,8 @@ int main() {
     std::thread tcp_thread {recive_packet, raw_socket, s_port, ref(tcp_port_status), ref(tcp_mutex), limit_ms, &sent_all, IPPROTO_TCP};
     std::thread udp_thread {recive_packet, icmp_socket, s_port, ref(udp_port_status), ref(udp_mutex), limit_ms, &sent_all, IPPROTO_ICMP};
 
-    send_all_packets(source, destination, s_port, raw_socket, port_num);
+    cerr << "destination " << destination << endl;
+    send_all_packets((char*) source.c_str(), (char*) destination.c_str(), s_port, raw_socket, port_num);
     sent_all.store(true);
 
     if (tcp_thread.joinable())
@@ -401,6 +262,10 @@ int main() {
     if (udp_thread.joinable())
         udp_thread.join();
 
+    close(raw_socket);
+    close(icmp_socket);
+
+    cout << "Interesting ports on " << hostname << " (" << destination << ")" << endl;
     print_result(port_num, tcp_port_status, udp_port_status);
 
     return 0;
