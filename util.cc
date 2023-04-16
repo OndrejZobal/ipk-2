@@ -113,25 +113,27 @@ struct sockaddr_in create_target(char* destination) {
     return target;
 }
 
+// The following function was taken from RFC 1071 [https://www.rfc-editor.org/rfc/rfc1071]
+// and is not subject to the GPL.
 unsigned short calculate_tcp_checksum(unsigned short *addr, int count) {
-        /* Compute Internet Checksum for "count" bytes
-        *         beginning at location "addr".
-        */
-       long sum = 0;
+    /* Compute Internet Checksum for "count" bytes
+    *         beginning at location "addr".
+    */
+    long sum = 0;
 
-        while( count > 1 )  {
-           /*  This is the inner loop */
-               sum += *addr++;
-               count -= 2;
-       }
+    while( count > 1 )  {
+        /*  This is the inner loop */
+        sum += *addr++;
+        count -= 2;
+    }
 
-           /*  Add left-over byte, if any */
-       if( count > 0 )
-               sum += * (unsigned char *) addr;
+    /*  Add left-over byte, if any */
+    if( count > 0 )
+        sum += * (unsigned char *) addr;
 
-           /*  Fold 32-bit sum to 16 bits */
-       while (sum>>16)
-           sum = (sum & 0xffff) + (sum >> 16);
+    /*  Fold 32-bit sum to 16 bits */
+    while (sum>>16)
+        sum = (sum & 0xffff) + (sum >> 16);
 
-       return ~sum;
+    return ~sum;
 }

@@ -125,14 +125,12 @@ void parse_range(char* range, PortType type, PortEnumer& port_enumeration, PortM
             }
             trailing_separator = true;
 
-            cerr << "AAA "  << acc <<  endl;
             int port = stoi(acc);
             acc = "";
 
             port_enumeration.push_back(pair(type, port));
             port_map.insert({port, status});
 
-            cerr << "signel port " << port << endl;
         }
         // Range ex. '10-100'
         else if (c == '-') {
@@ -171,7 +169,6 @@ void parse_range(char* range, PortType type, PortEnumer& port_enumeration, PortM
         for (int i = bound; i <= other_bound; i++) {
             port_enumeration.push_back(pair(type, i));
             port_map.insert({i, status});
-            cerr << "signel port " << i << endl;
         }
     }
     // Inserting last port from list
@@ -181,8 +178,6 @@ void parse_range(char* range, PortType type, PortEnumer& port_enumeration, PortM
 
         port_enumeration.push_back(pair(type, port));
         port_map.insert({port, status});
-
-        cerr << "signel port " << port << endl;
     }
 }
 

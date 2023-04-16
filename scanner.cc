@@ -253,7 +253,6 @@ int main(int argc, char** argv) {
     std::thread tcp_thread {recive_packet, raw_socket, s_port, ref(tcp_port_status), ref(tcp_mutex), limit_ms, &sent_all, IPPROTO_TCP};
     std::thread udp_thread {recive_packet, icmp_socket, s_port, ref(udp_port_status), ref(udp_mutex), limit_ms, &sent_all, IPPROTO_ICMP};
 
-    cerr << "destination " << destination << endl;
     send_all_packets((char*) source.c_str(), (char*) destination.c_str(), s_port, raw_socket, port_num);
     sent_all.store(true);
 
