@@ -31,8 +31,8 @@ clean:
 	rm ./$(TARGET) 2>/dev/null
 	rm xzobal01.zip 2>/dev/null ||true
 
-pack: *.cc *.hh *.md Makefile LICENSE
-	zip xzobal01.zip $^
+pack: *.cc *.hh *.md Makefile LICENSE .git
+	zip -r xzobal01.zip $^
 
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS) && echo "OK" >/dev/stderr
