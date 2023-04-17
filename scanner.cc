@@ -24,6 +24,9 @@
 
 using namespace std;
 
+/**
+ * Sends TCP packet using a raw socket. Source and Destination addreses are specified in the numbers-and-dots notation.
+ * */
 void send_tcp_packet(char* source, char* destination, int d_port, int s_port, int raw_socket, struct sockaddr_in target) {
     int packet_size;
     char* tcp_packet = create_tcp_syn(source, destination, d_port, s_port, &packet_size);
@@ -33,6 +36,9 @@ void send_tcp_packet(char* source, char* destination, int d_port, int s_port, in
     free(tcp_packet);
 }
 
+/**
+ * Sends UDP packet using a raw socket. Source and Destination addreses are specified in the numbers-and-dots notation.
+ * */
 void send_udp_packet(char* source, char* destination, int d_port, int s_port, int raw_socket, struct sockaddr_in target) {
     int packet_size;
     char* udp_packet = create_udp_probe(source, destination, d_port, s_port, &packet_size);
@@ -42,6 +48,9 @@ void send_udp_packet(char* source, char* destination, int d_port, int s_port, in
     free(udp_packet);
 }
 
+/**
+ * Parses a TCP header, if it is relevant to scanning record it in port_map.
+ * */
 int process_tcp_response(struct tcphdr* tcp_header, unsigned short s_port, PortMap& port_map, std::mutex& port_map_mutex) {
     if (ntohs(tcp_header->dest) != s_port) {
         return 0;
@@ -63,6 +72,9 @@ int process_tcp_response(struct tcphdr* tcp_header, unsigned short s_port, PortM
     return 0;
 }
 
+/**
+ * Parses an ICMP header, if it is relevant to scanning record it in port_map.
+ * */
 int process_icmp_response(struct icmphdr* icmp_header, unsigned short s_port, PortMap& udp_port_map, std::mutex& port_map_mutex) {
     if (icmp_header->type != ICMP_DEST_UNREACH || icmp_header->code != ICMP_PORT_UNREACH) {
         return 0;
@@ -89,6 +101,12 @@ int process_icmp_response(struct icmphdr* icmp_header, unsigned short s_port, Po
     return 0;
 }
 
+/**
+ * Listens for incoming packets and if they are a response to one of our probing segments,
+ * records it's findings in port_map.
+ * While sent_all is set to false, the function will receive indefinitely, once sent_all
+ * turns true, the scanning will continue for limit_ms microseconds.
+ * */
 void recive_packet(int raw_socket,
                    unsigned short s_port,
                    PortMap& port_map,
@@ -153,6 +171,9 @@ void recive_packet(int raw_socket,
     } while (ms < limit_ms);
 }
 
+/**
+ * Outputs information stored in TCP and UDP port maps to standard output.
+ * */
 void print_result(PortEnumer port_num, PortMap tcp_port_status, PortMap udp_port_status) {
     cout << "PORT STATE" << endl;
     for (pair i : port_num) {
@@ -202,7 +223,11 @@ void print_result(PortEnumer port_num, PortMap tcp_port_status, PortMap udp_port
 
 }
 
-void send_all_packets(char* source, char* destination, int s_port, int raw_socket, vector<pair<PortType, unsigned short>> port_num) {
+/**
+ * Sends one probing packet through the supplied raw socket for every entry in port_num.
+ * Source and destination are specified using the numbers-and-dots notation.
+ * */
+void send_all_packets(char* source, char* destination, int s_port, int raw_socket, PortEnumer port_num) {
     struct sockaddr_in target = create_target(destination);
 
     for (auto port : port_num) {
@@ -233,18 +258,27 @@ int main(int argc, char** argv) {
     PortMap tcp_port_status;
     PortMap udp_port_status;
 
+    // Configuring program from command line arguments.
     process_cmdline_args(argv, hostname, limit_ms, interface, port_num, tcp_port_status, udp_port_status);
 
+    // Converting supplied user-supplied hostname to an IP address.
     string destination = host_to_ip(hostname);
+    // Picking a random 16-bit number for the port and making sure we don't colide
+    // with any well-known ports.
     unsigned short s_port = rand() % (0xffff - 1024) + 1024;
 
+    // Quaring address of selected network interface.
     get_source_ip((char*) interface.c_str(), source);
 
+    // Creating raw sockets.
+    // The TCP socket can send UDP packets just fine.
     int raw_socket = create_socket(IPPROTO_TCP, (char*) interface.c_str());
     int icmp_socket = create_socket(IPPROTO_ICMP, (char*) interface.c_str());
 
+    // A flag used for communicating between threads that the sending of packets have been complete
     atomic<bool> sent_all { false };
 
+    // Mutexes for locking PortMaps.
     std::mutex tcp_mutex;
     std::mutex udp_mutex;
 
@@ -253,17 +287,21 @@ int main(int argc, char** argv) {
     std::thread tcp_thread {recive_packet, raw_socket, s_port, ref(tcp_port_status), ref(tcp_mutex), limit_ms, &sent_all, IPPROTO_TCP};
     std::thread udp_thread {recive_packet, icmp_socket, s_port, ref(udp_port_status), ref(udp_mutex), limit_ms, &sent_all, IPPROTO_ICMP};
 
+    // Sending probing packets.
     send_all_packets((char*) source.c_str(), (char*) destination.c_str(), s_port, raw_socket, port_num);
     sent_all.store(true);
 
+    // Waiting for receiving threads.
     if (tcp_thread.joinable())
         tcp_thread.join();
     if (udp_thread.joinable())
         udp_thread.join();
 
+    // We won't need the sockets anymore.
     close(raw_socket);
     close(icmp_socket);
 
+    // Printing results.
     cout << "Interesting ports on " << hostname << " (" << destination << ")" << endl;
     print_result(port_num, tcp_port_status, udp_port_status);
 
