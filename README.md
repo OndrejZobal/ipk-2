@@ -42,6 +42,9 @@ zařízení posílají chybové hlášení  protokolu ICMP, což neznačuje že 
 
 ## Popis implementace
 
+Tento program byl vytvořen pro operační systém GNU/Linux, na jiných operačních
+systémech nemusí fungovat!
+
 ### Reprezentace portů v paměti
 
  Aby se porty na výstupu objevily ve stejném pořadí jako na vstupu,  použil jsem
